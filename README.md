@@ -365,5 +365,5 @@ License
 This project is released under the MIT License — see LICENSE for details.
 <div align="center">
 
-Built with ❤️ for local, private AI
-</div> ```
+Built with ❤️ for local AI systems 
+</div> 
