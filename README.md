@@ -237,20 +237,25 @@ vllm serve /path/to/models/Qwen3.8-27B-FP8 \
   --tool-call-parser qwen3_xml \
   --enable-prefix-caching \
   --enable-chunked-prefill
-Wait for Application startup complete. — the model takes 2–4 minutes to load.
-2. Start the backend
-bash
+Wait for Application startup complete. — the model takes 2–4 minutes to load
+```
+
+###2. Start the backend
+
+```bash
 
 source /path/to/vllm-env/bin/activate
 cd backend
 python -m uvicorn main:app --host 0.0.0.0 --port 8003
+```
 
 3. Start the frontend
-bash
+```bash
 
 cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
+```
 
 4. Open
 text
@@ -352,9 +357,9 @@ Phase 4 — Advanced Interaction
     Tool execution UI panel
 Repository Status
 
-This repository currently contains the architecture and documentation for the project.
+This repository currently contains the project's architecture and documentation.
 
-Implementation files will be added incrementally as the system matures. Code quality and reproducibility are prioritized over rapid expansion.
+Implementation files will be added incrementally as the system matures. Code quality and reproducibility are prioritised over rapid expansion.
 License
 
 This project is released under the MIT License — see LICENSE for details.
