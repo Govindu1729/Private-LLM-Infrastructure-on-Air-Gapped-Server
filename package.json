@@ -1,0 +1,7 @@
+{
+  "name": "qwen-local-ai-agent-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "React frontend for the Qwen Local AI Agent"
+}
