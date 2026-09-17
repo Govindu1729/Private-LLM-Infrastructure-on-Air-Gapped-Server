@@ -42,7 +42,7 @@ Unlike a thin wrapper around a remote API, the system owns the full inference pa
 - **Model** — Qwen3.8-27B-FP8, running natively on the GPU
 - **Inference** — vLLM for high-throughput, low-latency generation
 - **Backend** — FastAPI orchestrating chat, streaming, and agent execution
-- **Frontend** — React with a ChatGPT-style interface
+- **Frontend** — React with a custom stylised interface
 - **Persistence** — SQLite for conversation and run history
 - **Tool Layer** — a controlled, auditable execution surface for agent capabilities
 
