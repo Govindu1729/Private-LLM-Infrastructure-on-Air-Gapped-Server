@@ -472,3 +472,343 @@ It was split into dedicated components such as:
 - Settings
 
 This improved maintainability and made the frontend easier to extend.
+
+---
+
+## Design Principles
+
+### Backend owns state
+
+The model does not own conversation state, run state, or tool state. The backend owns these.
+
+This makes the system easier to recover, audit, and extend.
+
+---
+
+### vLLM remains stateless
+
+The model server is treated as an inference service. Conversations are reconstructed from stored messages on each turn.
+
+This avoids tight coupling between inference and application logic.
+
+---
+
+### Runs are event-sourced
+
+Agent behavior is stored as an append-only sequence of events.
+
+This is one of the most valuable decisions in the project.
+
+---
+
+### Tools are controlled functions
+
+Tools are not arbitrary shell access. They are mediated through a controlled layer with path validation and sandboxing.
+
+---
+
+### Frontend stays thin
+
+The frontend focuses on rendering and interaction. Business logic remains in the backend.
+
+---
+
+### Effort is a budget, not a mode
+
+The same pipeline handles different effort levels. The main difference is the token budget.
+
+This keeps the system simple.
+
+---
+
+## Tool Categories
+
+### Filesystem tools
+
+Used for exploring and reading permitted files.
+
+Examples:
+
+- Directory listing
+- Tree browsing
+- Text file reading
+- File search
+- File statistics
+- Image reading
+- Notebook reading
+
+---
+
+### Python execution tools
+
+Used for running controlled Python snippets and capturing output.
+
+Examples:
+
+- Run Python code
+- Run and capture output
+- Execute helper scripts
+
+---
+
+### Notebook tools
+
+Used for notebook execution and inspection.
+
+Examples:
+
+- Execute notebook
+- Run with papermill-style execution
+- Read notebook cells
+- Inspect notebook output
+
+---
+
+### Web tools
+
+Used for controlled external access through the SOCKS proxy.
+
+Examples:
+
+- Web search
+- Web fetch
+- Web browse
+- JSON fetch
+- PDF reading
+
+---
+
+### Resource tools
+
+Used for working with documents and research resources.
+
+Examples:
+
+- Resource search
+- Resource read
+- PDF chunking
+- ArXiv fetching
+
+---
+
+### Memory tools
+
+Used for storing and recalling useful information across conversations.
+
+Examples:
+
+- Remember information
+- Recall relevant memory
+- Summarize conversations
+- Retrieve relevant summaries
+
+---
+
+### Agent tools
+
+Used for delegation.
+
+Examples:
+
+- Spawn sub-agent
+- Run focused sub-task
+- Return result to parent agent
+
+---
+
+## Current Capabilities
+
+The system can currently:
+
+- Chat with a locally hosted large language model
+- Stream responses through a custom UI
+- Execute multi-step tool workflows
+- Run Python code
+- Read and search permitted files
+- Access web resources through a proxy
+- Spawn sub-agents
+- Store conversation history
+- Store agent run history
+- Replay run events
+- Save memory entries
+- Summarize conversations
+- Manage long-running jobs
+- Recover from orphaned runs
+
+---
+
+## Known Limitations and Next Steps
+
+This project is active and still evolving. Some of the main next steps are:
+
+### 1. Adaptive effort controller
+
+The current effort router is heuristic. Once a token budget is chosen, it does not adapt during the turn.
+
+Future work:
+
+- Detect when the model hits the token limit
+- Escalate to a higher effort tier
+- Continue or merge the answer
+- Use historical run events to tune budgets
+
+---
+
+### 2. Parallel sub-agents
+
+Sub-agent spawning is currently synchronous. If the prompt asks for multiple sub-agents, they run one after another.
+
+Future work:
+
+- Add safe parallel spawning
+- Make shared tool state thread-safe
+- Isolate sub-agent depth and parent run context
+- Decide whether to support true parallelism or clarify the prompt language
+
+---
+
+### 3. Browser proxy propagation
+
+Web browsing through Playwright currently has proxy propagation issues when invoked from inside the backend.
+
+The likely fix is to pass explicit proxy arguments to the browser launcher instead of relying only on environment variables.
+
+---
+
+### 4. Vision path verification
+
+The model and tooling include image-related capabilities, but the vision path needs end-to-end verification.
+
+Future work:
+
+- Confirm vLLM vision configuration
+- Test image input through the chat pipeline
+- Validate image reading tools
+
+---
+
+### 5. Memory system tuning
+
+The memory and summarization system exists but needs review.
+
+Open questions:
+
+- When should summaries be generated?
+- Are summaries being retrieved effectively?
+- Are memories written automatically or only explicitly?
+- How can summary quality be evaluated?
+
+---
+
+### 6. Failure mode auditing
+
+Some run records currently mark successful completions with misleading error fields.
+
+Future work:
+
+- Separate true errors from success states
+- Improve run status semantics
+- Make analytics over runs more trustworthy
+
+---
+
+## What This Project Demonstrates
+
+This project demonstrates practical experience in:
+
+- Local LLM deployment
+- vLLM inference serving
+- Multi-GPU tensor parallelism
+- Agent runtime design
+- Tool calling loops
+- Function calling reliability
+- Event-sourced system design
+- SQLite-backed persistence
+- FastAPI backend development
+- Server-Sent Events streaming
+- React frontend development
+- Custom chat UI implementation
+- Sandboxed tool execution
+- Air-gapped environment engineering
+- Proxy configuration
+- Dependency constraint solving
+- Debugging non-deterministic model behavior
+- Building observable AI systems
+
+---
+
+## For Recruiters and Hiring Managers
+
+This project was built to solve a real problem:
+
+> How do you create a capable AI agent system when you cannot rely on cloud APIs, containers, package managers, or unrestricted internet access?
+
+The answer was to build a carefully constrained local system with strong observability, durable state, and practical tool execution.
+
+The most valuable parts of this project are not just the model or the UI, but the surrounding infrastructure:
+
+- Durable run tracking
+- Tool orchestration
+- Sandbox design
+- Streaming architecture
+- Proxy and environment work
+- Debuggability
+- Iterative improvement of agent behavior
+
+If you are interested in AI infrastructure, agent systems, local LLM deployment, or reliable tool-using AI, this repository provides a clear view into how I think about those problems.
+
+---
+
+## Repository Purpose
+
+This repository currently serves primarily as an **architectural showcase and knowledge base**.
+
+It documents:
+
+- System architecture
+- Hardware constraints
+- Environment setup decisions
+- Backend design
+- Frontend evolution
+- Tool layer design
+- Database schema concepts
+- Runtime behavior
+- Bugs encountered and fixed
+- Open questions
+- Future roadmap
+
+The goal is to make the system understandable without needing to reverse-engineer every implementation detail.
+
+---
+
+## Tech Stack Summary
+
+| Layer | Technology |
+|---|---|
+| Model serving | vLLM |
+| Language model | Qwen3.8-27B-FP8 |
+| GPU hardware | NVIDIA L40S |
+| Backend framework | FastAPI |
+| Programming language | Python |
+| Database | SQLite |
+| Frontend | React |
+| Frontend tooling | Vite |
+| Streaming | Server-Sent Events |
+| Async runtime | Python asyncio / threading where appropriate |
+| Web access | Requests / Playwright where available |
+| Networking | SOCKS proxy egress |
+| Persistence model | Event-sourced run logs |
+
+---
+
+## Closing Note
+
+Flair2 began as a simple local chat interface and evolved into a much larger experiment in private AI infrastructure.
+
+It is not just a chatbot.
+
+It is an attempt to build a reliable, inspectable, local agent system under real constraints — where every tool call, failure, budget decision, and model behavior matters.
+
+That constraint-driven design is what makes the project interesting.
+
+
