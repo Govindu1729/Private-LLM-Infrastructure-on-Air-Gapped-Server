@@ -15,355 +15,460 @@
 
 ---
 
-## Table of Contents
+# Private LLM Infrastructure on Air-Gapped Server
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Model & Hardware](#model--hardware)
-- [Software Stack](#software-stack)
-- [Features](#features)
-- [Agent Design](#agent-design)
-- [Tool Surface](#tool-surface)
-- [Security Principles](#security-principles)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Development Roadmap](#development-roadmap)
-- [Repository Status](#repository-status)
-- [License](#license)
+## Flair2 Local AI Agent — a local, event-sourced AI agent platform built on dual NVIDIA L40S GPUs
 
----
+This repository documents the design, architecture, and engineering journey behind **Flair2**, a private local AI agent system built to run on an air-gapped GPU server.
 
-## Overview
+The system combines:
 
-This project implements a **local AI assistant** — a self-hosted alternative to cloud-based LLM services — designed for privacy-sensitive and air-gapped environments.
+- A locally served large language model using **vLLM**
+- A custom **FastAPI** agent backend
+- An event-sourced run and tool-call architecture
+- A custom-built **React** chat interface
+- Sandboxed tools for filesystem access, Python execution, notebooks, web access, memory, and sub-agents
+- Networking and dependency workarounds for a constrained, air-gapped environment
 
-Unlike a thin wrapper around a remote API, the system owns the full inference path:
+The goal was simple but ambitious:
 
-- **Model** — Qwen3.8-27B-FP8, running natively on the GPU
-- **Inference** — vLLM for high-throughput, low-latency generation
-- **Backend** — FastAPI orchestrating chat, streaming, and agent execution
-- **Frontend** — React with a custom stylised interface
-- **Persistence** — SQLite for conversation and run history
-- **Tool Layer** — a controlled, auditable execution surface for agent capabilities
-
-The full stack runs on a private server with no outbound network dependencies.
+> Build a private, extensible AI agent that can chat, reason, call tools, execute code, browse the web through a controlled proxy, delegate work to sub-agents, and maintain durable history — all without relying on external hosted AI services.
 
 ---
 
-## Architecture
+## Why This Project Exists
 
+Most AI agent systems assume easy access to cloud APIs, package managers, Docker, outbound internet, and managed infrastructure.
+
+This project was built under the opposite constraints:
+
+- No hosted LLM APIs
+- Air-gapped networking except controlled SOCKS egress
+- No Docker
+- No Conda
+- No Slurm
+- No `sudo`
+- User-space-only installation
+- Pre-staged frontend dependencies
+- Careful CUDA/driver compatibility constraints
+
+These constraints made the project harder — but also more interesting.
+
+Instead of stitching together a high-level agent framework, I built a practical local agent stack from first principles:
+
+- A streaming chat backend
+- A durable agent run engine
+- A tool dispatch system
+- A sandboxed execution model
+- A custom frontend for observing agent behavior
+- An event log that makes every agent step replayable and debuggable
 
 ---
 
-## Model & Hardware
+## Quick Overview
 
-### Model
-
-| Property | Value |
+| Area | Details |
 |---|---|
-| **Name** | Qwen3.8-27B-FP8 |
-| **Repository** | [huggingface.co/Qwen/Qwen3.8-27B-FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8) |
-| **Precision** | FP8 |
-| **Parameters** | ~27B |
-| **Context window** | 262,144 tokens native (served at 65,536) |
-| **Capabilities** | Text, vision-language, tool-calling, long-context reasoning |
-
-### Hardware
-
-| Component | Specification |
-|---|---|
-| **GPU** | 2 × NVIDIA L40S |
-| **VRAM** | 48 GB per GPU (96 GB total) |
-| **Inference mode** | Tensor Parallelism (TP=2) |
-| **System RAM** | 128 GB |
-| **OS** | Ubuntu 22.04 LTS |
+| Project name | Flair2 Local AI Agent |
+| Inference engine | vLLM |
+| Model | Qwen3.8-27B-FP8 |
+| GPUs | 2 × NVIDIA L40S, 46 GB each |
+| CPU | Intel Xeon Silver 4514Y |
+| RAM | 125 GB |
+| OS | Ubuntu 22.04 LTS |
+| Backend | FastAPI / Python |
+| Database | SQLite |
+| Frontend | React + Vite |
+| Streaming | Server-Sent Events |
+| Architecture style | Event-sourced agent runs |
+| Networking | Air-gapped with SOCKS proxy egress |
+| Main focus | Local LLM infrastructure, agent runtime, tool calling, observability |
 
 ---
 
-## Software Stack
+## What Makes This Project Interesting
 
-<table>
-<tr>
-<td valign="top" width="33%">
+### 1. Fully local LLM agent stack
 
-**Backend**
-- Python 3.10
-- FastAPI
-- Uvicorn
-- SQLite
-- vLLM client
+The system runs a large language model locally using vLLM across two NVIDIA L40S GPUs with tensor parallelism.
 
-</td>
-<td valign="top" width="33%">
+The model is not treated as the source of truth for state. Instead, the backend owns the state, and the model is called as a stateless reasoning engine.
 
-**Frontend**
-- React 19
-- Vite 8
-- `react-markdown`
-- `react-syntax-highlighter`
-- KaTeX / LaTeX
+This keeps the system easier to reason about:
 
-</td>
-<td valign="top" width="33%">
-
-**Inference**
-- Qwen3.8-27B-FP8
-- vLLM 0.27.1
-- NVIDIA CUDA 12.9
-- Tensor Parallelism
-
-</td>
-</tr>
-</table>
+- Conversations are stored in SQLite
+- Agent runs are stored as durable rows
+- Tool calls and results are stored as append-only events
+- The frontend can reconnect and replay what happened
 
 ---
 
-## Features
+### 2. Event-sourced agent runs
 
-### Implemented
+One of the most important architectural decisions was to make agent runs **event-sourced**.
 
-- ✅ **Local LLM inference** — Qwen3.8-27B-FP8, fully offline
-- ✅ **Multi-GPU inference** — TP=2 across both L40S cards
-- ✅ **Streaming responses** — token-by-token via SSE
-- ✅ **Reasoning / answer separation** — `<think>` blocks parsed cleanly
-- ✅ **Persistent conversations** — SQLite-backed history
-- ✅ **ChatGPT-style interface** — clean, focused web UI
-- ✅ **Rich rendering** — Markdown, code, LaTeX
-- ✅ **Configurable reasoning effort** — auto / low / medium / high / ultra
-- ✅ **Agent mode** — tool-calling loop with explicit backend authorization
-- ✅ **Controlled tool execution** — auditable, least-privilege tool surface
+Every meaningful step in an agent run is recorded:
 
-### In Progress
+- Run started
+- Model requested a tool call
+- Tool executed
+- Tool result returned
+- Model continued
+- Final answer produced
+- Run succeeded or failed
 
-- 🚧 **Persistent agent runs** — resume execution after client disconnect
-- 🚧 **Preview pane** — live rendering of files, plots, and HTML
-- 🚧 **Notebook execution** — cell-by-cell `.ipynb` runs
-- 🚧 **Resource retrieval** — search across local document corpus
+This makes the system much easier to debug.
 
-- 
----
+Instead of asking:
 
-## Agent Design
+> “What did the agent do?”
 
-The agent is designed around **explicit, backend-registered tools**. The model never receives unrestricted access to the filesystem, network, or shell.
-LLM
-│
-▼
-Tool selection
-│
-▼
-Backend authorization
-│
-▼
-Specific tool
-│
-▼
-Validated result
-│
-▼
-LLM
+You can query:
 
-This separation ensures a clean boundary between **model-generated intent** and **actual system actions**. Every tool invocation is:
+> “What exact sequence of events happened during this run?”
 
-1. Chosen by the model via structured XML
-2. Validated by the backend against a schema
-3. Authorized against a permission policy
-4. Executed in a restricted environment
-5. Returned to the model as a structured result
+That distinction matters a lot for agent systems.
 
 ---
 
-## Tool Surface
+### 3. Custom React chat interface built from scratch
 
-| Tool | Purpose | Access |
-|---|---|---|
-| `fs.read()` | Read a file | Read-only, jailed |
-| `fs.write()` | Write a file | Sandbox-only |
-| `fs.list()` | List a directory | Read-only, jailed |
-| `py.run()` | Execute a Python script | Sandbox-only, no network |
-| `gpu.status()` | Report GPU usage | Read-only |
-| `resource.search()` | Search local document corpus | Read-only |
-| `resource.read()` | Read a corpus document | Read-only |
-| `db.query()` | Query the conversation DB | Read-only |
+The frontend was not built from a pre-made chat template. It grew from a simple chat page into a custom agent debugging and interaction interface.
 
-**Arbitrary shell execution is intentionally excluded.**
+It includes:
 
----
+- Streaming token output
+- Tool-call visualization
+- Reasoning block rendering
+- Markdown rendering
+- Code blocks
+- Prompt minimap
+- Streaming progress indicator
+- Message actions
+- Attachment handling
+- Preview pane for generated artifacts
+- Conversation history
+- Run status visualization
 
-## Security Principles
-
-- **No direct model access** to credentials, environment, or shell
-- **File access** restricted to approved project directories
-- **Python execution** restricted to controlled sandbox directories
-- **Database access** read-only where possible
-- **Sensitive data** stored server-side only, never in prompts
-- **High-risk actions** require explicit user confirmation
-- **Least-privilege permissions** for every tool
-
-> Full details: [`docs/tool-security.md`](docs/tool-security.md)
+The frontend is intentionally kept as a thin client. It renders events from the backend and provides a clean interface for interacting with the agent.
 
 ---
 
-## Project Structure
+### 4. Tool layer with sandboxing
+
+The agent has access to a tool layer that includes:
+
+- Filesystem browsing
+- File reading
+- Text search
+- Image reading
+- Notebook reading
+- Python execution
+- Notebook execution
+- Web search
+- Web fetch
+- Web browsing
+- PDF reading
+- Resource search
+- Memory storage
+- Memory retrieval
+- Sub-agent spawning
+
+For safety, tools are constrained by a jail model:
+
+- Reads are allowed only inside configured read jails
+- Writes are restricted to the run’s own sandbox directory
+- Path access is validated before execution
+- The agent cannot freely touch protected research directories
+
+This design allows the agent to be useful without giving it unrestricted filesystem access.
 
 ---
 
-## Getting Started
+### 5. Effort-based token budgeting
 
-> **Note:** The full system requires a GPU-enabled environment with vLLM and the Qwen3.8-27B-FP8 model locally available. See [`docs/deployment.md`](docs/deployment.md) for a complete setup guide.
+Not every prompt needs the same amount of reasoning or output length.
 
-### Prerequisites
+To manage this, the system includes an effort router that classifies prompts into broad effort tiers:
 
-- Python 3.10+
-- CUDA 12.9 compatible GPU(s) with ≥ 80 GB total VRAM
-- Node.js 20+
-- ~50 GB disk for the model weights
-- (Optional) Offline wheel cache for air-gapped installs
+| Effort level | Token budget |
+|---|---:|
+| Low | 1,024 |
+| Medium | 3,072 |
+| High | 8,192 |
+| Ultra | 16,384 |
 
-### 1. Start the vLLM inference server
+The current implementation is heuristic-based, using keyword and intent scoring. Adaptive escalation on token exhaustion is planned as a future improvement.
+
+---
+
+### 6. Sub-agent delegation
+
+The agent can spawn focused sub-agents for narrower tasks.
+
+This allows the parent agent to delegate work such as:
+
+- Search for a specific fact
+- Summarize a document
+- Fetch and extract information from a web source
+- Perform a focused research step
+
+Sub-agent depth is limited to avoid unbounded recursion.
+
+During development, this area exposed a real tool-calling bug: sub-agents initially received tools only on their first step. After the first tool call, tools disappeared, causing the model to stop or describe what it planned to do instead of continuing.
+
+This was fixed by ensuring tools are provided on every step of the sub-agent loop, rejecting plan-like final answers, and improving failure propagation back to the parent agent.
+
+---
+
+## High-Level Architecture
+
+```mermaid
+flowchart TD
+    Browser[Browser / React UI] -->|HTTP + SSE| Vite[Vite Dev Server]
+    Vite -->|Proxy API requests| Backend[FastAPI Backend]
+    Backend -->|OpenAI-compatible API| VLLM[vLLM Model Server]
+    VLLM --> GPUs[2 x NVIDIA L40S]
+    Backend --> DB[(SQLite Database)]
+    Backend --> Tools[Tool Layer]
+    Tools --> FS[Sandboxed Filesystem Tools]
+    Tools --> PY[Python Execution Tools]
+    Tools --> NB[Notebook Execution Tools]
+    Tools --> WEB[Web Tools via SOCKS Proxy]
+    Tools --> MEM[Memory / Summary Tools]
+    Tools --> AGENT[Sub-Agent Spawning]
+```
+---
+
+## System Components
+
+### Frontend
+
+The frontend is a React + Vite application that provides the user-facing chat and agent monitoring interface.
+
+Responsibilities:
+
+- Send chat messages
+- Start agent runs
+- Stream backend events
+- Display tool calls and results
+- Render Markdown and code
+- Show progress and token usage
+- Navigate long prompts
+- Preview generated outputs
+
+The frontend communicates with the backend over HTTP and Server-Sent Events.
+
+---
+
+### FastAPI Backend
+
+The backend is the core control plane.
+
+Responsibilities:
+
+- Manage conversations
+- Store messages
+- Create and track agent runs
+- Call the local vLLM server
+- Parse streamed model output
+- Dispatch tool calls
+- Record run events
+- Enforce token budgets
+- Manage memory and summaries
+- Handle outbound proxy environment variables
+
+The backend is intentionally the owner of system state.
+
+---
+
+### vLLM Model Server
+
+The model server runs locally and exposes an OpenAI-compatible API.
+
+Key characteristics:
+
+- Serves Qwen3.8-27B-FP8
+- Uses tensor parallelism across two GPUs
+- Supports long context windows
+- Remains stateless with respect to conversations
+
+This separation keeps inference isolated from application state.
+
+---
+
+### SQLite Database
+
+SQLite is used as the local persistence layer.
+
+Major tables include:
+
+- `conversations`
+- `messages`
+- `runs`
+- `run_events`
+- `jobs`
+- `memories`
+- `conversation_summaries`
+
+The most important tables for agent observability are `runs` and `run_events`.
+
+---
+
+## How a Chat Request Works
+
+A normal chat request follows this path:
+
+1. The browser sends a message to the backend.
+2. The backend stores the user message.
+3. The effort router selects a token budget if effort is set to automatic.
+4. The backend streams a request to vLLM.
+5. The backend parses streamed model deltas.
+6. If the model requests a tool call, the backend executes the tool.
+7. The tool result is appended to the conversation.
+8. The model continues reasoning with the tool result.
+9. The final response is saved and streamed back to the frontend.
+
+This loop allows the agent to perform multi-step work instead of only producing one-shot text.
+
+---
+
+## How an Agent Run Works
+
+Agent runs are more structured than simple chat turns.
+
+1. The user or system creates a run with a goal.
+2. A run row is inserted into the database.
+3. A background worker starts the agent loop.
+4. Each step is appended to `run_events`.
+5. The frontend connects to a run stream using Server-Sent Events.
+6. If the connection drops, the client can reconnect and replay from the last event ID.
+7. When the run finishes, the backend stores the final status and answer.
+8. Orphaned running jobs are cleaned up on backend restart.
+
+This makes runs durable, inspectable, and recoverable.
+
+---
+
+## Engineering Challenges Solved
+
+This project involved far more than connecting a frontend to a model endpoint. Many of the hardest problems came from constraints: air-gapped networking, dependency management, tool-calling correctness, and agent reliability.
+
+### 1. Air-gapped networking and proxy plumbing
+
+The server is air-gapped, but certain outbound operations still need to work through a controlled SOCKS proxy.
+
+The challenge was that different libraries respect different proxy environment variables.
+
+The solution was to export a full set of proxy variables at backend startup, including:
 
 ```bash
-source /path/to/vllm-env/bin/activate
-
-VLLM_USE_FLASHINFER_SAMPLER=0 \
-CUDA_VISIBLE_DEVICES=0,1 \
-vllm serve /path/to/models/Qwen3.8-27B-FP8 \
-  --tensor-parallel-size 2 \
-  --max-model-len 65536 \
-  --port 8002 \
-  --gpu-memory-utilization 0.92 \
-  --reasoning-parser qwen3 \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_xml \
-  --enable-prefix-caching \
-  --enable-chunked-prefill
-Wait for Application startup complete. — the model takes 2–4 minutes to load
+SOCKS_PROXY
+ALL_PROXY
+HTTPS_PROXY
+HTTP_PROXY
+https_proxy
+http_proxy
+NO_PROXY
 ```
 
-###2. Start the backend
+The `NO_PROXY` setting was especially important. Without it, local calls from the backend to the vLLM server could accidentally be routed through the proxy and fail.
 
-```bash
+---
 
-source /path/to/vllm-env/bin/activate
-cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8003
-```
+### 2. Tool calling reliability in sub-agents
 
-3. Start the frontend
-```bash
+During sub-agent testing, I found that sub-agents could make an initial tool call but then lose access to tools on later steps.
 
-cd frontend
-npm install
-npm run dev -- --host 0.0.0.0
-```
+This caused behavior like:
 
-4. Open
-text
+- “Let me fetch that page.”
+- “I will search for the result.”
+- No actual continuation.
+- Empty or plan-like final answers.
 
-http://<server-ip>:5173/
+The fix involved:
 
-Development Roadmap
-Phase 1 — Local Inference
+- Sending tools on every sub-agent step, not just the first step
+- Rejecting plan-shaped final answers
+- Nudging the model to actually use tools
+- Returning proper failure signals to the parent agent when a sub-agent gives up
 
-    ☑
+This made multi-step sub-agent workflows much more reliable.
 
-    Qwen model deployment
-    ☑
+---
 
-    vLLM inference pipeline
-    ☑
+### 3. Dependency and environment constraints
 
-    Multi-GPU inference (TP=2)
-    ☑
+Because the machine is constrained, the project could not rely on normal deployment conveniences.
 
-    Streaming generation
-    ☑
+Challenges included:
 
-    Reasoning parser integration
-    ☑
+- No Docker
+- No Conda
+- No Slurm
+- No `sudo`
+- Limited package installation paths
+- Pre-staged Node dependencies
+- CUDA/driver compatibility constraints
 
-    Tool-call parser integration
+The system was therefore built using:
 
-Phase 2 — Chat Interface
+- Bare Python virtual environments
+- Bare processes
+- User-space tooling
+- Careful environment configuration
+- Minimal external deployment assumptions
 
-    ☑
+This made the system harder to set up but much more portable within the constraints of the server.
 
-    React frontend
-    ☑
+---
 
-    FastAPI backend
-    ☑
+### 4. Preventing local proxy leakage
 
-    Persistent conversation history
-    ☑
+A subtle but important issue was preventing local service calls from being routed through the external proxy.
 
-    Markdown rendering
-    ☑
+The backend talks to vLLM locally. If proxy variables are set too broadly, local requests can break.
 
-    Code block rendering
-    ☑
+This was solved by explicitly excluding local networks and loopback addresses from proxying.
 
-    LaTeX rendering
+---
 
-Phase 3 — Agent Architecture
+### 5. Making agent behavior debuggable
 
-    ☑
+Agent systems can fail in confusing ways. A model may call a tool incorrectly, misinterpret a result, stop too early, or produce a plan instead of an action.
 
-    Agent loop design
-    ☑
+The event-sourced design solves this by recording the exact sequence of events.
 
-    Tool registry
-    ☑
+This allows debugging questions like:
 
-    File tools (fs.*)
-    ☑
+- Which tool was called?
+- What arguments were passed?
+- What did the tool return?
+- Did the model ignore the result?
+- Did the run hit the token budget?
+- Did the model stop prematurely?
+- Was the failure due to tool errors or model behavior?
 
-    Python execution tool (py.run)
-    ☑
+For an agent system, this kind of observability is essential.
 
-    GPU monitoring tool
-    ☑
+---
 
-    Resource search interface
-    ☑
+### 6. Frontend complexity management
 
-    Database query tool
-    ☑
+The original React interface began as a single-page chat app. As features grew, the interface became too large to maintain as one monolithic component.
 
-    Tool authorization layer
+It was split into dedicated components such as:
 
-Phase 4 — Advanced Interaction
+- Markdown renderer
+- Code block
+- Reasoning block
+- Tool trace
+- Streaming progress
+- Prompt minimap
+- Preview pane
+- Message actions
+- Attachment components
+- Settings
 
-    □
-
-    Stop generation
-    □
-
-    Regenerate response
-    □
-
-    Multiple simultaneous conversations
-    □
-
-    Adaptive reasoning effort
-    □
-
-    File uploads
-    □
-
-    Image input (vision)
-    □
-
-    Tool execution UI panel
-Repository Status
-
-This repository currently contains the project's architecture and documentation.
-
-Implementation files will be added incrementally as the system matures. Code quality and reproducibility are prioritised over rapid expansion.
-License
-
-This project is released under the MIT License — see LICENSE for details.
-<div align="center">
-
-Built with ❤️ for local AI systems 
-</div> 
+This improved maintainability and made the frontend easier to extend.
